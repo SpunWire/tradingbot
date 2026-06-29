@@ -1,6 +1,11 @@
 .env
+.env.spy
+.env.crypto
 __pycache__/
 *.pyc
 *.pyo
 .venv/
 venv/
+shared_state.json
+halt_*.flag
+*.log
