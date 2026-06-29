@@ -1,5 +1,5 @@
 import time
-import datetime
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 import os
 import alpaca_trade_api as tradeapi
@@ -20,8 +20,25 @@ TRADE_QTY = 5         # How many shares per trade
 MAX_LOSS = 500        # Bot shuts down if we lose $500 in a day
 
 def get_vwap():
-    """Get the current VWAP for our stock"""
-    bars = api.get_bars(SYMBOL, '1Min', limit=60).df
+    """Get the true daily VWAP calculated from market open"""
+    now = datetime.now(timezone.utc)
+    market_open = now.replace(hour=13, minute=30, second=0, microsecond=0)
+    
+    if now < market_open:
+        market_open = market_open.replace(day=now.day - 1)
+    
+    bars = api.get_bars(
+        SYMBOL,
+        '1Min',
+        start=market_open.isoformat(),
+        end=now.isoformat(),
+        adjustment='raw',
+        feed='iex'
+    ).df
+    
+    if bars.empty:
+        raise ValueError("No bar data returned")
+        
     bars['cum_vol'] = bars['volume'].cumsum()
     bars['cum_vp'] = (bars['vwap'] * bars['volume']).cumsum()
     vwap = bars['cum_vp'].iloc[-1] / bars['cum_vol'].iloc[-1]
@@ -55,13 +72,11 @@ def run_bot():
     
     while True:
         try:
-            # Don't trade if market is closed
             if not market_is_open():
                 print("Market closed. Waiting...")
                 time.sleep(60)
                 continue
 
-            # Kill switch — stop if we've lost too much
             pnl = get_daily_pnl()
             if pnl < -MAX_LOSS:
                 print(f"Max loss hit (${pnl:.2f}). Shutting down.")
@@ -71,9 +86,8 @@ def run_bot():
             vwap = get_vwap()
             position = get_position()
 
-            print(f"{datetime.datetime.now().strftime('%H:%M:%S')} | Price: ${price:.2f} | VWAP: ${vwap:.2f} | Position: {position} shares | P&L: ${pnl:.2f}")
+            print(f"{datetime.now().strftime('%H:%M:%S')} | Price: ${price:.2f} | VWAP: ${vwap:.2f} | Position: {position} shares | P&L: ${pnl:.2f}")
 
-            # BUY signal — price dropped below VWAP, expect it to bounce back up
             if price < vwap * 0.999 and position == 0:
                 print(f"BUY signal — price below VWAP. Buying {TRADE_QTY} shares.")
                 api.submit_order(
@@ -84,7 +98,6 @@ def run_bot():
                     time_in_force='day'
                 )
 
-            # SELL signal — price came back up above VWAP, take profit
             elif price > vwap * 1.001 and position > 0:
                 print(f"SELL signal — price above VWAP. Selling {position} shares.")
                 api.submit_order(
@@ -95,7 +108,7 @@ def run_bot():
                     time_in_force='day'
                 )
 
-            time.sleep(30)  # Check every 30 seconds
+            time.sleep(30)
 
         except Exception as e:
             print(f"Error: {e}")
