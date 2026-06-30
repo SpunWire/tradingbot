@@ -8,7 +8,7 @@ Logs every closed trade to spy_trades_log.csv.
 import csv
 import time
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
 import os
@@ -150,6 +150,20 @@ def run_bot() -> None:
 
     entry_price = None
     entry_time  = None
+
+    # Recover any position that was open before this restart
+    existing = get_position()
+    if existing > 0:
+        try:
+            pos_data    = api.get_position(SYMBOL)
+            entry_price = float(pos_data.avg_entry_price)
+            entry_time  = datetime.now(timezone.utc) - timedelta(seconds=61)  # waive 60s hold
+            sl = entry_price * (1 - STOP_LOSS_PCT)
+            tp = entry_price * (1 + TAKE_PROFIT_PCT)
+            print(f"[SPY] Recovered open position: {existing} shares @ ${entry_price:.2f}")
+            print(f"[SPY] SL=${sl:.2f} | TP=${tp:.2f} — resuming management")
+        except Exception as e:
+            print(f"[SPY] Warning: open position found but could not recover entry price: {e}")
 
     while True:
         try:
