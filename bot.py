@@ -1,5 +1,4 @@
 import csv
-import logging
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,13 +22,6 @@ STOP_LOSS_PCT   = 0.003   # 0.3% against entry
 TAKE_PROFIT_PCT = 0.006   # 0.6% in favor of entry — exactly 2× stop loss
 
 CSV_LOG = "bot_trades_log.csv"
-
-logging.basicConfig(
-    filename="bot_trades.log",
-    level=logging.INFO,
-    format="%(asctime)s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
 
 
 def log_trade_csv(entry: float, exit_p: float, reason: str, qty: int) -> None:
@@ -162,8 +154,6 @@ def run_bot():
                     api.submit_order(symbol=SYMBOL, qty=position, side='sell',
                                      type='market', time_in_force='day')
                     log_trade_csv(entry_price, price, "stop_loss", TRADE_QTY)
-                    logging.info("SELL/SL | %s | entry=%.2f | exit=%.2f | pnl=%+.2f",
-                                 SYMBOL, entry_price, price, realized_pnl)
                     entry_price = None
                     entry_time  = None
 
@@ -182,8 +172,6 @@ def run_bot():
                         api.submit_order(symbol=SYMBOL, qty=position, side='sell',
                                          type='market', time_in_force='day')
                         log_trade_csv(entry_price, price, "take_profit", TRADE_QTY)
-                        logging.info("SELL/TP | %s | entry=%.2f | exit=%.2f | pnl=%+.2f",
-                                     SYMBOL, entry_price, price, realized_pnl)
                         entry_price = None
                         entry_time  = None
 
@@ -196,8 +184,6 @@ def run_bot():
                                  type='market', time_in_force='day')
                 entry_price = price
                 entry_time  = now_utc
-                logging.info("BUY | %s | qty=%d | price=%.2f | vwap=%.2f | sl=%.2f | tp=%.2f",
-                             SYMBOL, TRADE_QTY, price, vwap, sl, tp)
 
             time.sleep(30)
 

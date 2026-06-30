@@ -1,0 +1,9 @@
+timestamp,bot,symbol,qty,entry_price,exit_price,exit_reason,realized_pnl,rr_ratio
+2026-06-30 08:37:28,crypto_bot,BTC/USD,0.01,59446.5430,59141.5400,stop_loss,-3.0500,-1.026
+2026-06-30 12:23:25,crypto_bot,BTC/USD,0.01,59141.5400,58834.3650,stop_loss,-3.0718,-1.039
+2026-06-30 12:51:06,crypto_bot,BTC/USD,0.01,58834.3650,58530.7400,stop_loss,-3.0362,-1.032
+2026-06-30 13:36:24,crypto_bot,BTC/USD,0.01,58530.7400,58169.9765,stop_loss,-3.6076,-1.233
+2026-06-30 14:02:07,crypto_bot,BTC/USD,0.01,58169.9765,58968.4500,take_profit,7.9847,2.745
+2026-06-30 14:55:01,crypto_bot,BTC/USD,0.01,58757.1705,58398.0450,stop_loss,-3.5913,-1.222
+2026-06-30 15:18:12,crypto_bot,BTC/USD,0.01,58398.0450,58103.3225,stop_loss,-2.9472,-1.009
+2026-06-30 19:35:59,crypto_bot,BTC/USD,0.01,58103.3225,58690.6500,take_profit,5.8733,2.022

@@ -7,7 +7,6 @@ Logs every closed trade to crypto_trades_log.csv.
 
 import csv
 import time
-import logging
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
@@ -33,13 +32,6 @@ STOP_LOSS_PCT   = 0.005   # 0.5% against entry
 TAKE_PROFIT_PCT = 0.010   # 1.0% in favor of entry — exactly 2× stop loss
 
 CSV_LOG = "crypto_trades_log.csv"
-
-logging.basicConfig(
-    filename="crypto_trades.log",
-    level=logging.INFO,
-    format="%(asctime)s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
 
 
 # ── trade logging ─────────────────────────────────────────────────────────────
@@ -139,7 +131,6 @@ def close_position_cleanly() -> None:
         print(f"[CRYPTO] Closing {pos} BTC before halt.")
         try:
             submit_order("sell", pos)
-            logging.info("CLOSE | %s | qty=%s | reason=halt", SYMBOL, pos)
         except Exception as e:
             print(f"[CRYPTO] Error closing position: {e}")
 
@@ -211,10 +202,6 @@ def run_bot() -> None:
                     if not halt:
                         submit_order("sell", position)
                         log_trade_csv(entry_price, price, "stop_loss", TRADE_QTY)
-                        logging.info(
-                            "SELL/SL | %s | entry=%.2f | exit=%.2f | pnl=%+.4f",
-                            SYMBOL, entry_price, price, realized_pnl,
-                        )
                     entry_price = None
                     entry_time  = None
                     if halt:
@@ -241,10 +228,6 @@ def run_bot() -> None:
                             break
                         submit_order("sell", position)
                         log_trade_csv(entry_price, price, "take_profit", TRADE_QTY)
-                        logging.info(
-                            "SELL/TP | %s | entry=%.2f | exit=%.2f | pnl=%+.4f",
-                            SYMBOL, entry_price, price, realized_pnl,
-                        )
                         entry_price = None
                         entry_time  = None
 
@@ -263,10 +246,6 @@ def run_bot() -> None:
                 submit_order("buy", TRADE_QTY)
                 entry_price = price
                 entry_time  = now_utc
-                logging.info(
-                    "BUY | %s | qty=%s | price=%.2f | vwap=%.2f | sl=%.2f | tp=%.2f",
-                    SYMBOL, TRADE_QTY, price, vwap, sl, tp,
-                )
 
             time.sleep(30)
 
