@@ -17,8 +17,10 @@ from datetime import datetime, timezone
 _STATE_FILE    = Path("shared_state.json")
 _PERM_HALT     = Path("halt_permanent.flag")   # drawdown floor breach — never resets
 
-DAILY_LOSS_LIMIT = 1_000.0   # Both bots stop for the day if account loses this much
-DRAWDOWN_FLOOR   = 22_500.0  # Both bots stop permanently if account equity falls below this
+DAILY_LOSS_LIMIT = 1_000.0   # All active bots stop for the day if account loses this much
+DRAWDOWN_FLOOR   = 22_500.0  # All active bots stop permanently if account equity falls below this
+# Supports any number of bots (spy_bot, crypto_bot, forex_bot, etc.)
+# forex_bot registers here but is inactive until its broker functions are wired up
 
 
 # ── internal helpers ──────────────────────────────────────────────────────────

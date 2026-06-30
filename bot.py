@@ -1,75 +1,119 @@
+import csv
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from dotenv import load_dotenv
 import os
 import alpaca_trade_api as tradeapi
 
-# Load your keys from .env
 load_dotenv()
 
-API_KEY = os.getenv("APCA_API_KEY_ID")
+API_KEY    = os.getenv("APCA_API_KEY_ID")
 SECRET_KEY = os.getenv("APCA_API_SECRET_KEY")
-BASE_URL = os.getenv("APCA_API_BASE_URL")
+BASE_URL   = os.getenv("APCA_API_BASE_URL")
 
-# Connect to Alpaca
 api = tradeapi.REST(API_KEY, SECRET_KEY, BASE_URL, api_version='v2')
 
-# Settings
-SYMBOL = "SPY"        # Stock we're trading
-TRADE_QTY = 5         # How many shares per trade
-MAX_LOSS = 500        # Bot shuts down if we lose $500 in a day
+SYMBOL          = "SPY"
+TRADE_QTY       = 5
+MAX_DAILY_LOSS  = 500
+
+STOP_LOSS_PCT   = 0.003   # 0.3% against entry
+TAKE_PROFIT_PCT = 0.006   # 0.6% in favor of entry — exactly 2× stop loss
+
+CSV_LOG = "trades_log.csv"
+
+
+def log_trade_csv(entry: float, exit_p: float, reason: str, qty: int) -> None:
+    realized_pnl = (exit_p - entry) * qty
+    rr_ratio     = (exit_p - entry) / (entry * STOP_LOSS_PCT)
+    exists        = Path(CSV_LOG).exists()
+    with open(CSV_LOG, "a", newline="") as f:
+        w = csv.writer(f)
+        if not exists:
+            w.writerow(["timestamp", "bot", "symbol", "qty",
+                        "entry_price", "exit_price", "exit_reason",
+                        "realized_pnl", "rr_ratio"])
+        w.writerow([
+            datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            "bot", SYMBOL, qty,
+            f"{entry:.4f}", f"{exit_p:.4f}",
+            reason,
+            f"{realized_pnl:.2f}",
+            f"{rr_ratio:.3f}",
+        ])
+
+
+def weekly_summary() -> None:
+    if not Path(CSV_LOG).exists():
+        print(f"No trade history in {CSV_LOG} yet.")
+        return
+    with open(CSV_LOG, newline="") as f:
+        trades = [r for r in csv.DictReader(f) if r["bot"] == "bot"]
+    if not trades:
+        print("No closed trades logged yet.")
+        return
+    total     = len(trades)
+    wins      = sum(1 for t in trades if t["exit_reason"] == "take_profit")
+    win_rate  = wins / total
+    avg_rr    = sum(float(t["rr_ratio"]) for t in trades) / total
+    breakeven = 1 / (1 + 2.0)
+    print(f"\n══ TRADE SUMMARY ({CSV_LOG}) ══════════════════")
+    print(f"  Total trades     : {total}")
+    print(f"  Wins / Losses    : {wins} / {total - wins}")
+    print(f"  Win rate         : {win_rate:.1%}  (breakeven at 2:1 = {breakeven:.1%})")
+    print(f"  Avg realized R:R : {avg_rr:+.3f}")
+    print(f"  Strategy         : {'PROFITABLE' if win_rate > breakeven else 'UNDER BREAKEVEN — review signals'}")
+    print(f"═══════════════════════════════════════════════\n")
+
 
 def get_vwap():
-    """Get the true daily VWAP calculated from market open"""
     now = datetime.now(timezone.utc)
     market_open = now.replace(hour=13, minute=30, second=0, microsecond=0)
-    
     if now < market_open:
         market_open = market_open.replace(day=now.day - 1)
-    
     bars = api.get_bars(
-        SYMBOL,
-        '1Min',
+        SYMBOL, '1Min',
         start=market_open.isoformat(),
         end=now.isoformat(),
         adjustment='raw',
-        feed='iex'
+        feed='iex',
     ).df
-    
     if bars.empty:
-        raise ValueError("No bar data returned")
-        
+        return None
     bars['cum_vol'] = bars['volume'].cumsum()
-    bars['cum_vp'] = (bars['vwap'] * bars['volume']).cumsum()
-    vwap = bars['cum_vp'].iloc[-1] / bars['cum_vol'].iloc[-1]
-    return vwap
+    bars['cum_vp']  = (bars['vwap'] * bars['volume']).cumsum()
+    return float(bars['cum_vp'].iloc[-1] / bars['cum_vol'].iloc[-1])
 
-def get_price():
-    """Get the current market price"""
-    trade = api.get_latest_trade(SYMBOL)
-    return trade.price
 
-def get_position():
-    """Check if we currently own shares"""
+def get_price() -> float:
+    return float(api.get_latest_trade(SYMBOL).price)
+
+
+def get_position() -> int:
     try:
-        pos = api.get_position(SYMBOL)
-        return int(pos.qty)
-    except:
+        return int(api.get_position(SYMBOL).qty)
+    except Exception:
         return 0
 
-def get_daily_pnl():
-    """Check how much we've made or lost today"""
-    account = api.get_account()
-    return float(account.equity) - float(account.last_equity)
 
-def market_is_open():
-    """Check if the stock market is currently open"""
-    clock = api.get_clock()
-    return clock.is_open
+def get_daily_pnl() -> float:
+    acct = api.get_account()
+    return float(acct.equity) - float(acct.last_equity)
+
+
+def market_is_open() -> bool:
+    return api.get_clock().is_open
+
 
 def run_bot():
-    print("Bot started. Watching", SYMBOL)
-    
+    print(f"Bot started. Watching {SYMBOL}")
+    print(f"Exit rules: SL={STOP_LOSS_PCT:.1%} | TP={TAKE_PROFIT_PCT:.1%} (2:1 R:R)")
+    weekly_summary()
+
+    entry_price = None
+    entry_time  = None
+
     while True:
         try:
             if not market_is_open():
@@ -78,40 +122,74 @@ def run_bot():
                 continue
 
             pnl = get_daily_pnl()
-            if pnl < -MAX_LOSS:
-                print(f"Max loss hit (${pnl:.2f}). Shutting down.")
+            if pnl < -MAX_DAILY_LOSS:
+                print(f"Max daily loss hit (${pnl:.2f}). Shutting down.")
                 break
 
-            price = get_price()
-            vwap = get_vwap()
+            price    = get_price()
+            vwap     = get_vwap()
             position = get_position()
+            now_utc  = datetime.now(timezone.utc)
 
-            print(f"{datetime.now().strftime('%H:%M:%S')} | Price: ${price:.2f} | VWAP: ${vwap:.2f} | Position: {position} shares | P&L: ${pnl:.2f}")
+            sl_level = f"${entry_price * (1 - STOP_LOSS_PCT):.2f}"  if entry_price else "—"
+            tp_level = f"${entry_price * (1 + TAKE_PROFIT_PCT):.2f}" if entry_price else "—"
 
-            if price < vwap * 0.999 and position == 0:
-                print(f"BUY signal — price below VWAP. Buying {TRADE_QTY} shares.")
-                api.submit_order(
-                    symbol=SYMBOL,
-                    qty=TRADE_QTY,
-                    side='buy',
-                    type='market',
-                    time_in_force='day'
-                )
+            print(
+                f"{now_utc.strftime('%H:%M:%S')} | "
+                f"Price: ${price:.2f} | VWAP: {f'${vwap:.2f}' if vwap else 'N/A'} | "
+                f"Pos: {position} | SL: {sl_level} | TP: {tp_level} | P&L: ${pnl:.2f}"
+            )
 
-            elif price > vwap * 1.001 and position > 0:
-                print(f"SELL signal — price above VWAP. Selling {position} shares.")
-                api.submit_order(
-                    symbol=SYMBOL,
-                    qty=position,
-                    side='sell',
-                    type='market',
-                    time_in_force='day'
-                )
+            # ── EXIT checks ───────────────────────────────────────────────────
+            if position > 0 and entry_price is not None:
+
+                # Stop loss — fires immediately
+                if price <= entry_price * (1 - STOP_LOSS_PCT):
+                    realized_pnl = (price - entry_price) * TRADE_QTY
+                    print(
+                        f"SELL — STOP LOSS hit. "
+                        f"Entry: ${entry_price:.2f} | Exit: ${price:.2f} | "
+                        f"P&L: {realized_pnl:+.2f}"
+                    )
+                    api.submit_order(symbol=SYMBOL, qty=position, side='sell',
+                                     type='market', time_in_force='day')
+                    log_trade_csv(entry_price, price, "stop_loss", TRADE_QTY)
+                    entry_price = None
+                    entry_time  = None
+
+                # Take profit — respects 60s minimum
+                elif price >= entry_price * (1 + TAKE_PROFIT_PCT):
+                    hold_secs = (now_utc - entry_time).total_seconds() if entry_time else 0
+                    if hold_secs < 60:
+                        print(f"Take profit target reached — holding ({hold_secs:.0f}s / 60s minimum)")
+                    else:
+                        realized_pnl = (price - entry_price) * TRADE_QTY
+                        print(
+                            f"SELL — TAKE PROFIT hit. "
+                            f"Entry: ${entry_price:.2f} | Exit: ${price:.2f} | "
+                            f"P&L: {realized_pnl:+.2f} (2:1 target achieved)"
+                        )
+                        api.submit_order(symbol=SYMBOL, qty=position, side='sell',
+                                         type='market', time_in_force='day')
+                        log_trade_csv(entry_price, price, "take_profit", TRADE_QTY)
+                        entry_price = None
+                        entry_time  = None
+
+            # ── BUY signal ────────────────────────────────────────────────────
+            elif vwap is not None and price < vwap * 0.999 and position == 0:
+                sl = price * (1 - STOP_LOSS_PCT)
+                tp = price * (1 + TAKE_PROFIT_PCT)
+                print(f"BUY {TRADE_QTY} shares @ ${price:.2f} | SL=${sl:.2f} | TP=${tp:.2f}")
+                api.submit_order(symbol=SYMBOL, qty=TRADE_QTY, side='buy',
+                                 type='market', time_in_force='day')
+                entry_price = price
+                entry_time  = now_utc
 
             time.sleep(30)
 
         except Exception as e:
             print(f"Error: {e}")
             time.sleep(30)
+
 
 run_bot()
