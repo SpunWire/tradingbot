@@ -21,7 +21,7 @@ MAX_DAILY_LOSS  = 500
 STOP_LOSS_PCT   = 0.003   # 0.3% against entry
 TAKE_PROFIT_PCT = 0.006   # 0.6% in favor of entry — exactly 2× stop loss
 
-CSV_LOG = "trades_log.csv"
+CSV_LOG = "bot_trades.log"
 
 
 def log_trade_csv(entry: float, exit_p: float, reason: str, qty: int) -> None:
