@@ -120,11 +120,8 @@ def get_position() -> float:
         return 0.0
 
 
-def get_account_data():
-    acct = api.get_account()
-    equity    = float(acct.equity)
-    daily_pnl = equity - float(acct.last_equity)
-    return equity, daily_pnl
+def get_account_data() -> float:
+    return float(api.get_account().equity)
 
 
 # ── order management ──────────────────────────────────────────────────────────
@@ -173,9 +170,9 @@ def run_bot() -> None:
 
     while True:
         try:
-            equity, daily_pnl = get_account_data()
+            equity = get_account_data()
 
-            halt, reason = risk.update_and_check(BOT_NAME, daily_pnl, equity)
+            halt, reason, daily_pnl = risk.update_and_check(BOT_NAME, equity)
             if halt:
                 print(f"[CRYPTO] HALT: {reason}")
                 close_position_cleanly()
@@ -210,7 +207,7 @@ def run_bot() -> None:
                         f"Entry: ${entry_price:,.2f} | Exit: ${price:,.2f} | "
                         f"P&L: {realized_pnl:+.4f}"
                     )
-                    halt, reason = risk.update_and_check(BOT_NAME, daily_pnl, equity)
+                    halt, reason, daily_pnl = risk.update_and_check(BOT_NAME, equity)
                     if not halt:
                         submit_order("sell", position)
                         log_trade_csv(entry_price, price, "stop_loss", TRADE_QTY)
@@ -237,7 +234,7 @@ def run_bot() -> None:
                             f"Entry: ${entry_price:,.2f} | Exit: ${price:,.2f} | "
                             f"P&L: {realized_pnl:+.4f} (2:1 target achieved)"
                         )
-                        halt, reason = risk.update_and_check(BOT_NAME, daily_pnl, equity)
+                        halt, reason, daily_pnl = risk.update_and_check(BOT_NAME, equity)
                         if halt:
                             print(f"[CRYPTO] HALT: {reason}")
                             close_position_cleanly()
@@ -253,7 +250,7 @@ def run_bot() -> None:
 
             # ── BUY signal — only when flat, uses VWAP as entry trigger ──────
             elif price < vwap * 0.999 and position == 0:
-                halt, reason = risk.update_and_check(BOT_NAME, daily_pnl, equity)
+                halt, reason, daily_pnl = risk.update_and_check(BOT_NAME, equity)
                 if halt:
                     print(f"[CRYPTO] HALT before buy: {reason}")
                     break
