@@ -1,7 +1,8 @@
 """
 SPY VWAP reversion bot — trades 9:30am–4:00pm ET only.
 Exit logic: fixed 2:1 stop loss / take profit based on entry price.
-VWAP is used only as the BUY trigger; it does NOT drive exits.
+VWAP triggers entries only — never drives exits.
+Supports both LONG and SHORT positions.
 Logs every closed trade to spy_trades_log.csv.
 """
 
@@ -23,32 +24,36 @@ BASE_URL   = os.getenv("APCA_API_BASE_URL")
 
 api = tradeapi.REST(API_KEY, SECRET_KEY, BASE_URL, api_version='v2')
 
-SYMBOL         = "SPY"
-TRADE_QTY      = 3
-BOT_NAME       = "spy_bot"
-ET             = pytz.timezone("America/New_York")
+SYMBOL          = "SPY"
+TRADE_QTY       = 3
+BOT_NAME        = "spy_bot"
+ET              = pytz.timezone("America/New_York")
 
-STOP_LOSS_PCT  = 0.003   # 0.3% against entry
-TAKE_PROFIT_PCT = 0.006  # 0.6% in favor of entry  — exactly 2× stop loss
+STOP_LOSS_PCT   = 0.003   # 0.3% against entry
+TAKE_PROFIT_PCT = 0.006   # 0.6% in favor of entry — exactly 2× stop loss
 
 CSV_LOG = "spy_trades_log.csv"
 
 
 # ── trade logging ─────────────────────────────────────────────────────────────
 
-def log_trade_csv(entry: float, exit_p: float, reason: str, qty: int) -> None:
-    realized_pnl = (exit_p - entry) * qty
-    rr_ratio     = (exit_p - entry) / (entry * STOP_LOSS_PCT)
-    exists        = Path(CSV_LOG).exists()
+def log_trade_csv(entry: float, exit_p: float, reason: str, qty: int, direction: str) -> None:
+    if direction == "long":
+        realized_pnl = (exit_p - entry) * qty
+        rr_ratio     = (exit_p - entry) / (entry * STOP_LOSS_PCT)
+    else:  # short
+        realized_pnl = (entry - exit_p) * qty
+        rr_ratio     = (entry - exit_p) / (entry * STOP_LOSS_PCT)
+    exists = Path(CSV_LOG).exists()
     with open(CSV_LOG, "a", newline="") as f:
         w = csv.writer(f)
         if not exists:
-            w.writerow(["timestamp", "bot", "symbol", "qty",
+            w.writerow(["timestamp", "bot", "symbol", "qty", "direction",
                         "entry_price", "exit_price", "exit_reason",
                         "realized_pnl", "rr_ratio"])
         w.writerow([
             datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-            BOT_NAME, SYMBOL, qty,
+            BOT_NAME, SYMBOL, qty, direction,
             f"{entry:.4f}", f"{exit_p:.4f}",
             reason,
             f"{realized_pnl:.2f}",
@@ -66,10 +71,10 @@ def weekly_summary() -> None:
         print("[SPY] No closed trades logged yet.")
         return
     total    = len(trades)
-    wins     = sum(1 for t in trades if t["exit_reason"] == "take_profit")
+    wins     = sum(1 for t in trades if t["exit_reason"] in ("take_profit", "short_take_profit"))
     win_rate = wins / total
     avg_rr   = sum(float(t["rr_ratio"]) for t in trades) / total
-    breakeven = 1 / (1 + 2.0)   # 33.3% at 2:1
+    breakeven = 1 / (1 + 2.0)
     print(f"\n[SPY] ══ TRADE SUMMARY ({CSV_LOG}) ══════════════")
     print(f"[SPY]   Total trades     : {total}")
     print(f"[SPY]   Wins / Losses    : {wins} / {total - wins}")
@@ -122,17 +127,23 @@ def submit_order(side: str, qty: int) -> None:
 def close_position_cleanly() -> None:
     pos = get_position()
     if pos > 0:
-        print(f"[SPY] Closing {pos} shares before halt.")
+        print(f"[SPY] Closing {pos} long shares before halt.")
         try:
             submit_order("sell", pos)
         except Exception as e:
-            print(f"[SPY] Error closing position: {e}")
+            print(f"[SPY] Error closing long: {e}")
+    elif pos < 0:
+        print(f"[SPY] Covering {abs(pos)} short shares before halt.")
+        try:
+            submit_order("buy", abs(pos))
+        except Exception as e:
+            print(f"[SPY] Error covering short: {e}")
 
 
 # ── main loop ─────────────────────────────────────────────────────────────────
 
 def run_bot() -> None:
-    print(f"[SPY] Bot started — {SYMBOL}, {TRADE_QTY} shares/signal.")
+    print(f"[SPY] Bot started — {SYMBOL}, {TRADE_QTY} shares/signal. LONG + SHORT enabled.")
     print(f"[SPY] Exit rules: SL={STOP_LOSS_PCT:.1%} | TP={TAKE_PROFIT_PCT:.1%} (2:1 R:R)")
     weekly_summary()
 
@@ -145,13 +156,22 @@ def run_bot() -> None:
         try:
             pos_data    = api.get_position(SYMBOL)
             entry_price = float(pos_data.avg_entry_price)
-            entry_time  = datetime.now(timezone.utc) - timedelta(seconds=61)  # waive 60s hold
+            entry_time  = datetime.now(timezone.utc) - timedelta(seconds=61)
             sl = entry_price * (1 - STOP_LOSS_PCT)
             tp = entry_price * (1 + TAKE_PROFIT_PCT)
-            print(f"[SPY] Recovered open position: {existing} shares @ ${entry_price:.2f}")
-            print(f"[SPY] SL=${sl:.2f} | TP=${tp:.2f} — resuming management")
+            print(f"[SPY] Recovered LONG: {existing} shares @ ${entry_price:.2f} | SL=${sl:.2f} | TP=${tp:.2f}")
         except Exception as e:
-            print(f"[SPY] Warning: open position found but could not recover entry price: {e}")
+            print(f"[SPY] Warning: could not recover long entry price: {e}")
+    elif existing < 0:
+        try:
+            pos_data    = api.get_position(SYMBOL)
+            entry_price = float(pos_data.avg_entry_price)
+            entry_time  = datetime.now(timezone.utc) - timedelta(seconds=61)
+            sl = entry_price * (1 + STOP_LOSS_PCT)
+            tp = entry_price * (1 - TAKE_PROFIT_PCT)
+            print(f"[SPY] Recovered SHORT: {existing} shares @ ${entry_price:.2f} | SL=${sl:.2f} | TP=${tp:.2f}")
+        except Exception as e:
+            print(f"[SPY] Warning: could not recover short entry price: {e}")
 
     while True:
         try:
@@ -174,30 +194,39 @@ def run_bot() -> None:
             position = get_position()
             now_utc  = datetime.now(timezone.utc)
 
-            sl_level = f"${entry_price * (1 - STOP_LOSS_PCT):.2f}"  if entry_price else "—"
-            tp_level = f"${entry_price * (1 + TAKE_PROFIT_PCT):.2f}" if entry_price else "—"
+            # Direction-aware SL/TP display levels
+            if position > 0 and entry_price:
+                sl_level = f"${entry_price * (1 - STOP_LOSS_PCT):.2f}"
+                tp_level = f"${entry_price * (1 + TAKE_PROFIT_PCT):.2f}"
+            elif position < 0 and entry_price:
+                sl_level = f"${entry_price * (1 + STOP_LOSS_PCT):.2f}"
+                tp_level = f"${entry_price * (1 - TAKE_PROFIT_PCT):.2f}"
+            else:
+                sl_level = tp_level = "—"
+
+            if position > 0:
+                pos_display = f"+{position} {SYMBOL} (LONG)"
+            elif position < 0:
+                pos_display = f"{position} {SYMBOL} (SHORT)"
+            else:
+                pos_display = "0"
 
             print(
                 f"[SPY] {now_utc.strftime('%H:%M:%S')} | "
                 f"Price=${price:.2f} | VWAP={f'${vwap:.2f}' if vwap else 'N/A'} | "
-                f"Pos={position} | SL={sl_level} | TP={tp_level} | P&L={daily_pnl:+.2f}"
+                f"Pos={pos_display} | SL={sl_level} | TP={tp_level} | P&L={daily_pnl:+.2f}"
             )
 
-            # ── EXIT checks (only when in a position) ─────────────────────────
+            # ── LONG exit checks ──────────────────────────────────────────────
             if position > 0 and entry_price is not None:
 
-                # Stop loss — fires immediately, no 60s minimum (capital protection)
                 if price <= entry_price * (1 - STOP_LOSS_PCT):
                     realized_pnl = (price - entry_price) * TRADE_QTY
-                    print(
-                        f"[SPY] SELL — STOP LOSS hit. "
-                        f"Entry: ${entry_price:.2f} | Exit: ${price:.2f} | "
-                        f"P&L: {realized_pnl:+.2f}"
-                    )
+                    print(f"[SPY] SELL — STOP LOSS hit. Entry: ${entry_price:.2f} | Exit: ${price:.2f} | P&L: {realized_pnl:+.2f}")
                     halt, reason, daily_pnl = risk.update_and_check(BOT_NAME, equity)
                     if not halt:
                         submit_order("sell", position)
-                        log_trade_csv(entry_price, price, "stop_loss", TRADE_QTY)
+                        log_trade_csv(entry_price, price, "stop_loss", TRADE_QTY, "long")
                     entry_price = None
                     entry_time  = None
                     if halt:
@@ -205,43 +234,83 @@ def run_bot() -> None:
                         close_position_cleanly()
                         break
 
-                # Take profit — respects 60s minimum hold for prop firm validity
                 elif price >= entry_price * (1 + TAKE_PROFIT_PCT):
                     hold_secs = (now_utc - entry_time).total_seconds() if entry_time else 0
                     if hold_secs < 60:
-                        print(f"[SPY] Take profit target reached — holding for 60s minimum ({hold_secs:.0f}s elapsed)")
+                        print(f"[SPY] Long take profit reached — holding ({hold_secs:.0f}s / 60s minimum)")
                     else:
                         realized_pnl = (price - entry_price) * TRADE_QTY
-                        print(
-                            f"[SPY] SELL — TAKE PROFIT hit. "
-                            f"Entry: ${entry_price:.2f} | Exit: ${price:.2f} | "
-                            f"P&L: {realized_pnl:+.2f} (2:1 target achieved)"
-                        )
+                        print(f"[SPY] SELL — TAKE PROFIT hit. Entry: ${entry_price:.2f} | Exit: ${price:.2f} | P&L: {realized_pnl:+.2f} (2:1 achieved)")
                         halt, reason, daily_pnl = risk.update_and_check(BOT_NAME, equity)
                         if halt:
                             print(f"[SPY] HALT: {reason}")
                             close_position_cleanly()
                             break
                         submit_order("sell", position)
-                        log_trade_csv(entry_price, price, "take_profit", TRADE_QTY)
+                        log_trade_csv(entry_price, price, "take_profit", TRADE_QTY, "long")
                         entry_price = None
                         entry_time  = None
 
-            # ── BUY signal — only when flat, uses VWAP as entry trigger ──────
-            elif price < (vwap or float("inf")) * 0.999 and position == 0 and vwap is not None:
-                halt, reason, daily_pnl = risk.update_and_check(BOT_NAME, equity)
-                if halt:
-                    print(f"[SPY] HALT before buy: {reason}")
-                    break
-                sl = price * (1 - STOP_LOSS_PCT)
-                tp = price * (1 + TAKE_PROFIT_PCT)
-                print(
-                    f"[SPY] BUY {TRADE_QTY} shares @ ${price:.2f} | "
-                    f"SL=${sl:.2f} | TP=${tp:.2f}"
-                )
-                submit_order("buy", TRADE_QTY)
-                entry_price = price
-                entry_time  = now_utc
+            # ── SHORT exit checks ─────────────────────────────────────────────
+            elif position < 0 and entry_price is not None:
+
+                if price >= entry_price * (1 + STOP_LOSS_PCT):
+                    realized_pnl = (entry_price - price) * TRADE_QTY
+                    print(f"[SPY] COVER — STOP LOSS hit. Entry: ${entry_price:.2f} | Exit: ${price:.2f} | P&L: {realized_pnl:+.2f}")
+                    halt, reason, daily_pnl = risk.update_and_check(BOT_NAME, equity)
+                    if not halt:
+                        submit_order("buy", abs(position))
+                        log_trade_csv(entry_price, price, "short_stop_loss", TRADE_QTY, "short")
+                    entry_price = None
+                    entry_time  = None
+                    if halt:
+                        print(f"[SPY] HALT: {reason}")
+                        close_position_cleanly()
+                        break
+
+                elif price <= entry_price * (1 - TAKE_PROFIT_PCT):
+                    hold_secs = (now_utc - entry_time).total_seconds() if entry_time else 0
+                    if hold_secs < 60:
+                        print(f"[SPY] Short take profit reached — holding ({hold_secs:.0f}s / 60s minimum)")
+                    else:
+                        realized_pnl = (entry_price - price) * TRADE_QTY
+                        print(f"[SPY] COVER — TAKE PROFIT hit. Entry: ${entry_price:.2f} | Exit: ${price:.2f} | P&L: {realized_pnl:+.2f} (2:1 achieved)")
+                        halt, reason, daily_pnl = risk.update_and_check(BOT_NAME, equity)
+                        if halt:
+                            print(f"[SPY] HALT: {reason}")
+                            close_position_cleanly()
+                            break
+                        submit_order("buy", abs(position))
+                        log_trade_csv(entry_price, price, "short_take_profit", TRADE_QTY, "short")
+                        entry_price = None
+                        entry_time  = None
+
+            # ── ENTRY signals — only when flat ────────────────────────────────
+            elif position == 0 and vwap is not None:
+
+                if price < vwap * 0.999:
+                    halt, reason, daily_pnl = risk.update_and_check(BOT_NAME, equity)
+                    if halt:
+                        print(f"[SPY] HALT before buy: {reason}")
+                        break
+                    sl = price * (1 - STOP_LOSS_PCT)
+                    tp = price * (1 + TAKE_PROFIT_PCT)
+                    print(f"[SPY] BUY {TRADE_QTY} shares @ ${price:.2f} | SL=${sl:.2f} | TP=${tp:.2f}")
+                    submit_order("buy", TRADE_QTY)
+                    entry_price = price
+                    entry_time  = now_utc
+
+                elif price > vwap * 1.001:
+                    halt, reason, daily_pnl = risk.update_and_check(BOT_NAME, equity)
+                    if halt:
+                        print(f"[SPY] HALT before short: {reason}")
+                        break
+                    sl = price * (1 + STOP_LOSS_PCT)
+                    tp = price * (1 - TAKE_PROFIT_PCT)
+                    print(f"[SPY] SHORT signal — price above VWAP. Shorting {TRADE_QTY} shares @ ${price:.2f} | SL=${sl:.2f} | TP=${tp:.2f}")
+                    submit_order("sell", TRADE_QTY)
+                    entry_price = price
+                    entry_time  = now_utc
 
             time.sleep(30)
 

@@ -1,1 +1,1 @@
-timestamp,bot,symbol,qty,entry_price,exit_price,exit_reason,realized_pnl,rr_ratio
+timestamp,bot,symbol,qty,direction,entry_price,exit_price,exit_reason,realized_pnl,rr_ratio

@@ -1,6 +1,6 @@
 import csv
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
 import os
@@ -24,19 +24,23 @@ TAKE_PROFIT_PCT = 0.006   # 0.6% in favor of entry — exactly 2× stop loss
 CSV_LOG = "bot_trades_log.csv"
 
 
-def log_trade_csv(entry: float, exit_p: float, reason: str, qty: int) -> None:
-    realized_pnl = (exit_p - entry) * qty
-    rr_ratio     = (exit_p - entry) / (entry * STOP_LOSS_PCT)
-    exists        = Path(CSV_LOG).exists()
+def log_trade_csv(entry: float, exit_p: float, reason: str, qty: int, direction: str) -> None:
+    if direction == "long":
+        realized_pnl = (exit_p - entry) * qty
+        rr_ratio     = (exit_p - entry) / (entry * STOP_LOSS_PCT)
+    else:  # short
+        realized_pnl = (entry - exit_p) * qty
+        rr_ratio     = (entry - exit_p) / (entry * STOP_LOSS_PCT)
+    exists = Path(CSV_LOG).exists()
     with open(CSV_LOG, "a", newline="") as f:
         w = csv.writer(f)
         if not exists:
-            w.writerow(["timestamp", "bot", "symbol", "qty",
+            w.writerow(["timestamp", "bot", "symbol", "qty", "direction",
                         "entry_price", "exit_price", "exit_reason",
                         "realized_pnl", "rr_ratio"])
         w.writerow([
             datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
-            "bot", SYMBOL, qty,
+            "bot", SYMBOL, qty, direction,
             f"{entry:.4f}", f"{exit_p:.4f}",
             reason,
             f"{realized_pnl:.2f}",
@@ -54,7 +58,7 @@ def weekly_summary() -> None:
         print("No closed trades logged yet.")
         return
     total     = len(trades)
-    wins      = sum(1 for t in trades if t["exit_reason"] == "take_profit")
+    wins      = sum(1 for t in trades if t["exit_reason"] in ("take_profit", "short_take_profit"))
     win_rate  = wins / total
     avg_rr    = sum(float(t["rr_ratio"]) for t in trades) / total
     breakeven = 1 / (1 + 2.0)
@@ -131,59 +135,98 @@ def run_bot():
             position = get_position()
             now_utc  = datetime.now(timezone.utc)
 
-            sl_level = f"${entry_price * (1 - STOP_LOSS_PCT):.2f}"  if entry_price else "—"
-            tp_level = f"${entry_price * (1 + TAKE_PROFIT_PCT):.2f}" if entry_price else "—"
+            if position > 0 and entry_price:
+                sl_level = f"${entry_price * (1 - STOP_LOSS_PCT):.2f}"
+                tp_level = f"${entry_price * (1 + TAKE_PROFIT_PCT):.2f}"
+            elif position < 0 and entry_price:
+                sl_level = f"${entry_price * (1 + STOP_LOSS_PCT):.2f}"
+                tp_level = f"${entry_price * (1 - TAKE_PROFIT_PCT):.2f}"
+            else:
+                sl_level = tp_level = "—"
+
+            if position > 0:
+                pos_display = f"+{position} {SYMBOL} (LONG)"
+            elif position < 0:
+                pos_display = f"{position} {SYMBOL} (SHORT)"
+            else:
+                pos_display = "0"
 
             print(
                 f"{now_utc.strftime('%H:%M:%S')} | "
                 f"Price: ${price:.2f} | VWAP: {f'${vwap:.2f}' if vwap else 'N/A'} | "
-                f"Pos: {position} | SL: {sl_level} | TP: {tp_level} | P&L: ${pnl:.2f}"
+                f"Pos: {pos_display} | SL: {sl_level} | TP: {tp_level} | P&L: ${pnl:.2f}"
             )
 
-            # ── EXIT checks ───────────────────────────────────────────────────
+            # ── LONG exit checks ──────────────────────────────────────────────
             if position > 0 and entry_price is not None:
 
-                # Stop loss — fires immediately
                 if price <= entry_price * (1 - STOP_LOSS_PCT):
                     realized_pnl = (price - entry_price) * TRADE_QTY
-                    print(
-                        f"SELL — STOP LOSS hit. "
-                        f"Entry: ${entry_price:.2f} | Exit: ${price:.2f} | "
-                        f"P&L: {realized_pnl:+.2f}"
-                    )
+                    print(f"SELL — STOP LOSS hit. Entry: ${entry_price:.2f} | Exit: ${price:.2f} | P&L: {realized_pnl:+.2f}")
                     api.submit_order(symbol=SYMBOL, qty=position, side='sell',
                                      type='market', time_in_force='day')
-                    log_trade_csv(entry_price, price, "stop_loss", TRADE_QTY)
+                    log_trade_csv(entry_price, price, "stop_loss", TRADE_QTY, "long")
                     entry_price = None
                     entry_time  = None
 
-                # Take profit — respects 60s minimum
                 elif price >= entry_price * (1 + TAKE_PROFIT_PCT):
                     hold_secs = (now_utc - entry_time).total_seconds() if entry_time else 0
                     if hold_secs < 60:
                         print(f"Take profit target reached — holding ({hold_secs:.0f}s / 60s minimum)")
                     else:
                         realized_pnl = (price - entry_price) * TRADE_QTY
-                        print(
-                            f"SELL — TAKE PROFIT hit. "
-                            f"Entry: ${entry_price:.2f} | Exit: ${price:.2f} | "
-                            f"P&L: {realized_pnl:+.2f} (2:1 target achieved)"
-                        )
+                        print(f"SELL — TAKE PROFIT hit. Entry: ${entry_price:.2f} | Exit: ${price:.2f} | P&L: {realized_pnl:+.2f} (2:1 achieved)")
                         api.submit_order(symbol=SYMBOL, qty=position, side='sell',
                                          type='market', time_in_force='day')
-                        log_trade_csv(entry_price, price, "take_profit", TRADE_QTY)
+                        log_trade_csv(entry_price, price, "take_profit", TRADE_QTY, "long")
                         entry_price = None
                         entry_time  = None
 
-            # ── BUY signal ────────────────────────────────────────────────────
-            elif vwap is not None and price < vwap * 0.999 and position == 0:
-                sl = price * (1 - STOP_LOSS_PCT)
-                tp = price * (1 + TAKE_PROFIT_PCT)
-                print(f"BUY {TRADE_QTY} shares @ ${price:.2f} | SL=${sl:.2f} | TP=${tp:.2f}")
-                api.submit_order(symbol=SYMBOL, qty=TRADE_QTY, side='buy',
-                                 type='market', time_in_force='day')
-                entry_price = price
-                entry_time  = now_utc
+            # ── SHORT exit checks ─────────────────────────────────────────────
+            elif position < 0 and entry_price is not None:
+
+                if price >= entry_price * (1 + STOP_LOSS_PCT):
+                    realized_pnl = (entry_price - price) * TRADE_QTY
+                    print(f"COVER — STOP LOSS hit. Entry: ${entry_price:.2f} | Exit: ${price:.2f} | P&L: {realized_pnl:+.2f}")
+                    api.submit_order(symbol=SYMBOL, qty=abs(position), side='buy',
+                                     type='market', time_in_force='day')
+                    log_trade_csv(entry_price, price, "short_stop_loss", TRADE_QTY, "short")
+                    entry_price = None
+                    entry_time  = None
+
+                elif price <= entry_price * (1 - TAKE_PROFIT_PCT):
+                    hold_secs = (now_utc - entry_time).total_seconds() if entry_time else 0
+                    if hold_secs < 60:
+                        print(f"Short take profit reached — holding ({hold_secs:.0f}s / 60s minimum)")
+                    else:
+                        realized_pnl = (entry_price - price) * TRADE_QTY
+                        print(f"COVER — TAKE PROFIT hit. Entry: ${entry_price:.2f} | Exit: ${price:.2f} | P&L: {realized_pnl:+.2f} (2:1 achieved)")
+                        api.submit_order(symbol=SYMBOL, qty=abs(position), side='buy',
+                                         type='market', time_in_force='day')
+                        log_trade_csv(entry_price, price, "short_take_profit", TRADE_QTY, "short")
+                        entry_price = None
+                        entry_time  = None
+
+            # ── ENTRY signals — only when flat ────────────────────────────────
+            elif vwap is not None and position == 0:
+
+                if price < vwap * 0.999:
+                    sl = price * (1 - STOP_LOSS_PCT)
+                    tp = price * (1 + TAKE_PROFIT_PCT)
+                    print(f"BUY {TRADE_QTY} shares @ ${price:.2f} | SL=${sl:.2f} | TP=${tp:.2f}")
+                    api.submit_order(symbol=SYMBOL, qty=TRADE_QTY, side='buy',
+                                     type='market', time_in_force='day')
+                    entry_price = price
+                    entry_time  = now_utc
+
+                elif price > vwap * 1.001:
+                    sl = price * (1 + STOP_LOSS_PCT)
+                    tp = price * (1 - TAKE_PROFIT_PCT)
+                    print(f"SHORT signal — price above VWAP. Shorting {TRADE_QTY} shares @ ${price:.2f} | SL=${sl:.2f} | TP=${tp:.2f}")
+                    api.submit_order(symbol=SYMBOL, qty=TRADE_QTY, side='sell',
+                                     type='market', time_in_force='day')
+                    entry_price = price
+                    entry_time  = now_utc
 
             time.sleep(30)
 
