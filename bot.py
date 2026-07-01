@@ -220,8 +220,16 @@ def run_bot():
 
             # ── ENTRY signals — only when flat ────────────────────────────────
             elif vwap is not None and position == 0:
+                # Re-confirm live position from Alpaca — local state can lag a filled order
+                try:
+                    current_qty = int(api.get_position(SYMBOL).qty)
+                except Exception:
+                    current_qty = 0
 
-                if price < vwap * 0.999:
+                if current_qty != 0:
+                    print(f"[BOT] Signal skipped — position already open (qty={current_qty})")
+
+                elif price < vwap * 0.999:
                     sl = price * (1 - STOP_LOSS_PCT)
                     tp = price * (1 + TAKE_PROFIT_PCT)
                     print(f"BUY {TRADE_QTY} shares @ ${price:.2f} | SL=${sl:.2f} | TP=${tp:.2f}")
