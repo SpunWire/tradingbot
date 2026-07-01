@@ -4,9 +4,12 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
 import os
+import pytz
 import alpaca_trade_api as tradeapi
 
 load_dotenv()
+
+EDT = pytz.timezone("America/New_York")
 
 API_KEY    = os.getenv("APCA_API_KEY_ID")
 SECRET_KEY = os.getenv("APCA_API_SECRET_KEY")
@@ -39,7 +42,7 @@ def log_trade_csv(entry: float, exit_p: float, reason: str, qty: int, direction:
                         "entry_price", "exit_price", "exit_reason",
                         "realized_pnl", "rr_ratio"])
         w.writerow([
-            datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            datetime.now(EDT).strftime("%Y-%m-%d %H:%M:%S ET"),
             "bot", SYMBOL, qty, direction,
             f"{entry:.4f}", f"{exit_p:.4f}",
             reason,
@@ -134,6 +137,7 @@ def run_bot():
             vwap     = get_vwap()
             position = get_position()
             now_utc  = datetime.now(timezone.utc)
+            now_et   = datetime.now(EDT)
 
             if position > 0 and entry_price:
                 sl_level = f"${entry_price * (1 - STOP_LOSS_PCT):.2f}"
@@ -152,7 +156,7 @@ def run_bot():
                 pos_display = "0"
 
             print(
-                f"{now_utc.strftime('%H:%M:%S')} | "
+                f"{now_et.strftime('%H:%M:%S ET')} | "
                 f"Price: ${price:.2f} | VWAP: {f'${vwap:.2f}' if vwap else 'N/A'} | "
                 f"Pos: {pos_display} | SL: {sl_level} | TP: {tp_level} | P&L: ${pnl:.2f}"
             )

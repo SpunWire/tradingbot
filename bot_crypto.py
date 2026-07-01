@@ -11,11 +11,14 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
 import os
+import pytz
 import alpaca_trade_api as tradeapi
 import pandas as pd
 import shared_risk as risk
 
 load_dotenv(".env.crypto")
+
+EDT = pytz.timezone("America/New_York")
 
 API_KEY    = os.getenv("APCA_API_KEY_ID")
 SECRET_KEY = os.getenv("APCA_API_SECRET_KEY")
@@ -47,7 +50,7 @@ def log_trade_csv(entry: float, exit_p: float, reason: str, qty: float) -> None:
                         "entry_price", "exit_price", "exit_reason",
                         "realized_pnl", "rr_ratio"])
         w.writerow([
-            datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            datetime.now(EDT).strftime("%Y-%m-%d %H:%M:%S ET"),
             BOT_NAME, SYMBOL, qty,
             f"{entry:.4f}", f"{exit_p:.4f}",
             reason,
@@ -199,6 +202,7 @@ def run_bot() -> None:
 
             position = get_position()
             now_utc  = datetime.now(timezone.utc)
+            now_et   = datetime.now(EDT)
 
             # Check trend on every iteration (only gates buys, never exits)
             new_trend = get_trend()
@@ -213,7 +217,7 @@ def run_bot() -> None:
             tp_level = f"${entry_price * (1 + TAKE_PROFIT_PCT):,.2f}" if entry_price else "—"
 
             print(
-                f"[CRYPTO] {now_utc.strftime('%H:%M:%S')} | "
+                f"[CRYPTO] {now_et.strftime('%H:%M:%S ET')} | "
                 f"Price=${price:,.2f} | VWAP=${vwap:,.2f} | "
                 f"Pos={position} BTC | Trend={trend_state} | "
                 f"SL={sl_level} | TP={tp_level} | P&L={daily_pnl:+.2f}"

@@ -52,7 +52,7 @@ def log_trade_csv(entry: float, exit_p: float, reason: str, qty: int, direction:
                         "entry_price", "exit_price", "exit_reason",
                         "realized_pnl", "rr_ratio"])
         w.writerow([
-            datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            datetime.now(ET).strftime("%Y-%m-%d %H:%M:%S ET"),
             BOT_NAME, SYMBOL, qty, direction,
             f"{entry:.4f}", f"{exit_p:.4f}",
             reason,
@@ -193,6 +193,7 @@ def run_bot() -> None:
             vwap     = get_vwap()
             position = get_position()
             now_utc  = datetime.now(timezone.utc)
+            now_et   = datetime.now(ET)
 
             # Direction-aware SL/TP display levels
             if position > 0 and entry_price:
@@ -212,7 +213,7 @@ def run_bot() -> None:
                 pos_display = "0"
 
             print(
-                f"[SPY] {now_utc.strftime('%H:%M:%S')} | "
+                f"[SPY] {now_et.strftime('%H:%M:%S ET')} | "
                 f"Price=${price:.2f} | VWAP={f'${vwap:.2f}' if vwap else 'N/A'} | "
                 f"Pos={pos_display} | SL={sl_level} | TP={tp_level} | P&L={daily_pnl:+.2f}"
             )
