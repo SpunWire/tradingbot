@@ -115,21 +115,24 @@ def get_price_and_vwap():
     return price, vwap
 
 
-def get_trend() -> str:
+def get_ema_trend() -> str:
     """
-    Pulls last 6 completed 10-min bars and returns 'DOWN' or 'NEUTRAL'.
-    DOWN  : last 3 closes are each lower than the previous (3 consecutive lower closes).
-    NEUTRAL: anything else, including 2 consecutive higher closes after a downtrend.
-    Only used to gate new BUY entries — never affects open position management.
+    Fetches the last 30 15-min bars and returns the slope direction of a 20-period EMA.
+    UP      : ema[-1] > ema[-6] by >= 0.05%  — suppresses short entries
+    DOWN    : ema[-1] < ema[-6] by >= 0.05%  — suppresses long entries
+    NEUTRAL : slope magnitude < 0.05%        — allows both directions
+    Never affects open position management (exits always fire regardless).
     """
     try:
-        start = (datetime.now(timezone.utc) - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        bars  = _normalise_bars(api.get_crypto_bars(SYMBOL, "10Min", start=start).df)
-        if bars.empty or len(bars) < 4:
+        start = (datetime.now(timezone.utc) - timedelta(hours=8)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        bars  = _normalise_bars(api.get_crypto_bars(SYMBOL, "15Min", start=start).df)
+        if bars.empty or len(bars) < 20:
             return "NEUTRAL"
-        closes = bars["close"].tolist()
-        c = closes[-4:]   # last 4 gives us 3 consecutive comparisons
-        if c[3] < c[2] < c[1]:
+        ema   = bars["close"].ewm(span=20, adjust=False).mean()
+        slope = (ema.iloc[-1] - ema.iloc[-6]) / ema.iloc[-6]
+        if slope > 0.0005:
+            return "UP"
+        if slope < -0.0005:
             return "DOWN"
         return "NEUTRAL"
     except Exception:
@@ -175,7 +178,7 @@ def run_bot() -> None:
 
     entry_price = None
     entry_time  = None
-    trend_state = "NEUTRAL"
+    ema_trend   = "NEUTRAL"
 
     # Recover any position that was open before this restart
     existing = get_position()
@@ -211,14 +214,7 @@ def run_bot() -> None:
             now_utc  = datetime.now(timezone.utc)
             now_et   = datetime.now(EDT)
 
-            # Check trend on every iteration (only gates buys, never exits)
-            new_trend = get_trend()
-            if new_trend != trend_state:
-                if new_trend == "DOWN":
-                    print("[CRYPTO] Trend filter: DOWNTREND detected — buy signal suppressed")
-                else:
-                    print("[CRYPTO] Trend filter: NEUTRAL — buy signals resumed")
-                trend_state = new_trend
+            ema_trend = get_ema_trend()
 
             sl_level = f"${entry_price * (1 - STOP_LOSS_PCT):,.2f}"  if entry_price else "—"
             tp_level = f"${entry_price * (1 + TAKE_PROFIT_PCT):,.2f}" if entry_price else "—"
@@ -226,7 +222,7 @@ def run_bot() -> None:
             print(
                 f"[CRYPTO] {now_et.strftime('%H:%M:%S ET')} | "
                 f"Price=${price:,.2f} | VWAP=${vwap:,.2f} | "
-                f"Pos={position} BTC | Trend={trend_state} | "
+                f"Pos={position} BTC | EMA={ema_trend} | "
                 f"SL={sl_level} | TP={tp_level} | P&L={daily_pnl:+.2f}"
             )
 
@@ -274,12 +270,12 @@ def run_bot() -> None:
                         entry_price = None
                         entry_time  = None
 
-            # Trend suppressed — print once per loop when buy would otherwise fire
-            elif price < vwap * 0.999 and position == 0 and trend_state == "DOWN":
-                print("[CRYPTO] Trend filter: DOWNTREND detected — buy signal suppressed")
+            # EMA suppressed — long blocked in downtrend
+            elif price < vwap * 0.999 and position == 0 and ema_trend == "DOWN":
+                print("[CRYPTO] EMA filter: DOWNTREND — long entry suppressed")
 
-            # ── BUY signal — only when flat, VWAP trigger, trend filter applied ─
-            elif price < vwap * 0.999 and position == 0 and trend_state != "DOWN":
+            # ── BUY signal — only when flat, VWAP trigger, EMA filter applied ──
+            elif price < vwap * 0.999 and position == 0 and ema_trend != "DOWN":
                 halt, reason, daily_pnl = risk.update_and_check(BOT_NAME, equity)
                 if halt:
                     print(f"[CRYPTO] HALT before buy: {reason}")
