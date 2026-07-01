@@ -5,6 +5,13 @@ VWAP is used only as the BUY trigger; it does NOT drive exits.
 Logs every closed trade to crypto_trades_log.csv.
 """
 
+# ============================================================
+# DISPLAY TIMEZONE: EDT (America/New_York) — DO NOT CHANGE
+# Internal reset logic uses UTC — that stays UTC
+# datetime.now(EDT) for all terminal prints and CSV logs
+# datetime.utcnow() only inside reset window comparisons
+# ============================================================
+
 import csv
 import time
 from datetime import datetime, timezone, timedelta
