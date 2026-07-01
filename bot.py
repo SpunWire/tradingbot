@@ -128,6 +128,22 @@ def run_bot():
     entry_price = None
     entry_time  = None
 
+    # Recover any position that was open before this restart
+    try:
+        pos_data    = api.get_position(SYMBOL)
+        entry_price = float(pos_data.avg_entry_price)
+        qty         = float(pos_data.qty)
+        entry_time  = datetime.now(timezone.utc) - timedelta(seconds=61)  # waive 60s hold
+        if qty > 0:
+            sl = entry_price * (1 - STOP_LOSS_PCT)
+            tp = entry_price * (1 + TAKE_PROFIT_PCT)
+        else:
+            sl = entry_price * (1 + STOP_LOSS_PCT)
+            tp = entry_price * (1 - TAKE_PROFIT_PCT)
+        print(f"[BOT] Recovered position — qty={qty} @ avg_entry={entry_price} | SL={sl:.2f} | TP={tp:.2f}")
+    except Exception:
+        pass  # no open position — start flat
+
     while True:
         try:
             if not market_is_open():
