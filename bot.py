@@ -25,7 +25,7 @@ BASE_URL   = os.getenv("APCA_API_BASE_URL")
 api = tradeapi.REST(API_KEY, SECRET_KEY, BASE_URL, api_version='v2')
 
 SYMBOL          = "SPY"
-TRADE_QTY       = 5
+TRADE_QTY       = 20
 MAX_DAILY_LOSS  = 500
 
 STOP_LOSS_PCT   = 0.003   # 0.3% against entry

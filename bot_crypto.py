@@ -35,7 +35,7 @@ api = tradeapi.REST(API_KEY, SECRET_KEY, BASE_URL, api_version='v2')
 
 SYMBOL          = "BTC/USD"
 POSITION_SYMBOL = "BTCUSD"
-TRADE_QTY       = 0.01
+TRADE_QTY       = 0.05
 BOT_NAME        = "crypto_bot"
 
 STOP_LOSS_PCT   = 0.005   # 0.5% against entry

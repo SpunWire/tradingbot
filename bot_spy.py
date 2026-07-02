@@ -32,7 +32,7 @@ BASE_URL   = os.getenv("APCA_API_BASE_URL")
 api = tradeapi.REST(API_KEY, SECRET_KEY, BASE_URL, api_version='v2')
 
 SYMBOL          = "SPY"
-TRADE_QTY       = 3
+TRADE_QTY       = 10
 BOT_NAME        = "spy_bot"
 ET              = pytz.timezone("America/New_York")
 
